@@ -13,7 +13,7 @@ import tensorflow.contrib.slim as slim
 config = {
     "num_runs": 30,
     "batch_size": 10,
-    "base_learning_rate": 0.001,
+    "base_learning_rate": 0.0005,
     "base_lr_decay": 0.8,
     "base_lr_decays_every": 10,
     "base_lr_min": 0.00001,
