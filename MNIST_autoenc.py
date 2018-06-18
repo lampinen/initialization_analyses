@@ -13,20 +13,21 @@ import tensorflow.contrib.slim as slim
 config = {
     "num_runs": 30,
     "batch_size": 10,
-    "base_learning_rate": 0.0005,
-    "base_lr_decay": 1.,
-    "base_lr_decays_every": 100,
+    "base_learning_rate": 0.001,
+    "base_lr_decay": 0.8,
+    "base_lr_decays_every": 10,
     "base_lr_min": 0.00001,
-    "base_training_epochs": 100,
+    "base_training_epochs": 200,
     "output_path": "./results/",
     "nobias": False, # no biases
     "linear": False,
     "num_val": 10000,
+    "noise_prob": 0.2, # probability of flipping image pixels 
     "verbose": True,
     "layer_sizes": [256, 128, 64, 128, 256]
 }
 
-inits = [0.1, 1.0] # multiplies xavier initializer 
+inits = [1.0, 0.1] # multiplies xavier initializer 
 
 ###### MNIST data loading and manipulation #####################################
 # downloaded from https://pjreddie.com/projects/mnist-in-csv/
@@ -38,6 +39,9 @@ def process_data(dataset):
     """Get data split into dict with labels and images"""
     labels = dataset[:, 0]
     images = dataset[:, 1:]/255.
+    flip_mask = np.random.binomial(1, config["noise_prob"], np.shape(images))
+    images = (1.-flip_mask) * images + flip_mask * (1.-images)
+    images = np.clip(images, 0., 1.);
     data = {"labels": labels, "images": images}
     return data
 
