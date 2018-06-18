@@ -17,11 +17,12 @@ config = {
     "base_lr_decay": 1.,
     "base_lr_decays_every": 100,
     "base_lr_min": 0.00001,
-    "base_training_epochs": 60,
+    "base_training_epochs": 100,
     "output_path": "./results/",
     "nobias": False, # no biases
     "linear": False,
     "num_val": 10000,
+    "verbose": True,
     "layer_sizes": [256, 128, 64, 128, 256]
 }
 
@@ -148,12 +149,17 @@ class MNIST_autoenc(object):
                         })
 
 		train_loss = self.eval(dataset)
-		val_loss = self.eval(dataset)
-		test_loss = self.eval(dataset)
+		val_loss = self.eval(val_dataset)
+		test_loss = self.eval(test_dataset)
                 fout.write("%i, %f, %f, %f\n" % (epoch,
                                                  train_loss,
                                                  val_loss,
                                                  test_loss))
+                if config["verbose"]:
+                    print("%i, %f, %f, %f\n" % (epoch,
+                                                train_loss,
+                                                val_loss,
+                                                test_loss))
 
                 # update lr
                 if epoch > 0 and epoch % config["base_lr_decays_every"] == 0 and self.base_lr > config["base_lr_min"]: 
