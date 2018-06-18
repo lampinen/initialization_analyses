@@ -22,7 +22,7 @@ config = {
     "nobias": False, # no biases
     "linear": False,
     "num_val": 10000,
-    "noise_prob": 0.2, # probability of flipping image pixels 
+    "noise_prob": 0.15, # probability of flipping image pixels 
     "verbose": True,
     "layer_sizes": [256, 128, 64, 128, 256]
 }
@@ -41,7 +41,6 @@ def process_data(dataset):
     images = dataset[:, 1:]/255.
     flip_mask = np.random.binomial(1, config["noise_prob"], np.shape(images))
     images = (1.-flip_mask) * images + flip_mask * (1.-images)
-    images = np.clip(images, 0., 1.);
     data = {"labels": labels, "images": images}
     return data
 
