@@ -24,7 +24,7 @@ config = {
     "num_val": 10000,
     "noise_prob": 0.15, # probability of flipping image pixels 
     "verbose": True,
-    "layer_sizes": [256, 128, 64, 128, 256]
+    "layer_sizes": [256, 256, 256, 256, 256]
 }
 
 inits = [1.0, 0.1] # multiplies xavier initializer 
@@ -89,36 +89,36 @@ class MNIST_autoenc(object):
 
         self.bottleneck_size = min(layer_sizes)
 
-	# small weight initializer
-	weight_init = tf.contrib.layers.variance_scaling_initializer(factor=init_multiplier, mode='FAN_AVG')
-	if config["linear"]:
-	    intermediate_activation_fn=None
-	    final_activation_fn=None
-	else:
-	    intermediate_activation_fn=tf.nn.relu
-	    final_activation_fn=tf.nn.sigmoid
-	
+        # small weight initializer
+        weight_init = tf.contrib.layers.variance_scaling_initializer(factor=init_multiplier, mode='FAN_AVG')
+        if config["linear"]:
+            intermediate_activation_fn=None
+            final_activation_fn=None
+        else:
+            intermediate_activation_fn=tf.nn.relu
+            final_activation_fn=tf.nn.sigmoid
+        
 
         net = self.input_ph
-	bottleneck_layer_i = len(layer_sizes)//2
+        bottleneck_layer_i = len(layer_sizes)//2
         for i, h_size in enumerate(layer_sizes):
-	    if config["nobias"]:
-	      net = slim.layers.fully_connected(net, h_size, activation_fn=intermediate_activation_fn,
-						weights_initializer=weight_init,
-						biases_initializer=None)
-	    else:
-	      net = slim.layers.fully_connected(net, h_size, activation_fn=intermediate_activation_fn,
-						weights_initializer=weight_init)
+            if config["nobias"]:
+              net = slim.layers.fully_connected(net, h_size, activation_fn=intermediate_activation_fn,
+                                                weights_initializer=weight_init,
+                                                biases_initializer=None)
+            else:
+              net = slim.layers.fully_connected(net, h_size, activation_fn=intermediate_activation_fn,
+                                                weights_initializer=weight_init)
             if i == bottleneck_layer_i: 
                 self.bottleneck_rep = net
-	if config["nobias"]:
-	    self.output = slim.layers.fully_connected(net, 784, activation_fn=final_activation_fn,
-						      weights_initializer=weight_init,
-						      biases_initializer=None)
-	else:
-	    self.output = slim.layers.fully_connected(net, 784, activation_fn=final_activation_fn,
-						      weights_initializer=weight_init)
-						  
+        if config["nobias"]:
+            self.output = slim.layers.fully_connected(net, 784, activation_fn=final_activation_fn,
+                                                      weights_initializer=weight_init,
+                                                      biases_initializer=None)
+        else:
+            self.output = slim.layers.fully_connected(net, 784, activation_fn=final_activation_fn,
+                                                      weights_initializer=weight_init)
+                                                  
         self.loss = tf.nn.l2_loss(self.output-self.input_ph)
 
         self.optimizer = tf.train.GradientDescentOptimizer(self.lr_ph)
@@ -144,16 +144,16 @@ class MNIST_autoenc(object):
             batch_size = config["batch_size"]
             for epoch in range(1, nepochs + 1):
                 order = np.random.permutation(len(dataset["labels"]))
-                for batch_i in xrange(len(dataset["labels"])//batch_size):
+                for batch_i in range(len(dataset["labels"])//batch_size):
                     this_batch_images = dataset["images"][order[batch_i*batch_size:(batch_i+1)*batch_size], :]
                     self.sess.run(self.train, feed_dict={
                             self.input_ph: this_batch_images,
                             self.lr_ph: self.base_lr 
                         })
 
-		train_loss = self.eval(dataset)
-		val_loss = self.eval(val_dataset)
-		test_loss = self.eval(test_dataset)
+                train_loss = self.eval(dataset)
+                val_loss = self.eval(val_dataset)
+                test_loss = self.eval(test_dataset)
                 fout.write("%i, %f, %f, %f\n" % (epoch,
                                                  train_loss,
                                                  val_loss,
@@ -173,7 +173,7 @@ class MNIST_autoenc(object):
         """Gets bottleneck reps for the given images"""
         batch_size = config["batch_size"]
         reps = np.zeros([len(images), self.bottleneck_size])
-        for batch_i in xrange((len(images)//batch_size) + 1):
+        for batch_i in range((len(images)//batch_size) + 1):
             this_batch_images = images[batch_i*batch_size:(batch_i+1)*batch_size, :]
             reps[batch_i*batch_size:(batch_i+1)*batch_size, :] = self.sess.run(
                 self.bottleneck_rep, feed_dict={
@@ -185,7 +185,7 @@ class MNIST_autoenc(object):
         """Gets losses for the given images"""
         batch_size = config["batch_size"]
         loss = np.zeros([len(images)])
-        for batch_i in xrange((len(images)//batch_size) + 1):
+        for batch_i in range((len(images)//batch_size) + 1):
             this_batch_images = images[batch_i*batch_size:(batch_i+1)*batch_size, :]
             loss[batch_i*batch_size:(batch_i+1)*batch_size] = self.sess.run(
                 self.loss, feed_dict={
