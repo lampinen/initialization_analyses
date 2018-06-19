@@ -30,6 +30,7 @@ config = {
     "stop_thresh": 0.001, # stop when trainin error reaches this
     "stop_val_increase_ratio": 1.05, # ratio of increase in validation error over min at which we stop
     "num_adv_examples": 10, # number of test examples to construct adversarial examples for
+    "max_adv_iterations": 5000,
     "adv_eta": 0.05 # gradient descent step size for constructing adversarial examples
 }
 
@@ -262,7 +263,7 @@ class MNIST_model(object):
         images_not_done = np.ones_like(labels, dtype=np.bool)
         adv_eta = config["adv_eta"]
 
-        while np.any(images_not_done):
+        for _ in range(config["max_adv_iterations"]):
             this_feed_dict = {
                     self.input_ph: curr_images,
                     self.target_ph: labels,
@@ -272,14 +273,16 @@ class MNIST_model(object):
             curr_hardmaxes = np.argmax(curr_softmaxes, axis=-1)
             images_not_done = np.not_equal(curr_hardmaxes, adversarial_classes)
             curr_images[images_not_done, :] += adv_eta * curr_grads[0][images_not_done, :] 
+            if not np.any(images_not_done):
+                break
 
         l2_dists = np.linalg.norm(curr_images - images, axis=-1)
         if filename is not None:
             with open(filename, "w" if create_file else "a") as fout:
                 if create_file:
-                    fout.write("index, original_class, new_class, l2_dist\n")
+                    fout.write("index, original_class, new_class, failed, l2_dist\n")
                 for i in range(len(labels)):
-                    fout.write("%i, %i, %i, %f\n" % (i, labels[i], adversarial_classes[i], l2_dists[i]))
+                    fout.write("%i, %i, %i, %i, %f\n" % (i, labels[i], adversarial_classes[i], images_not_done[i], l2_dists[i]))
         return curr_images, l2_dists
 
     def display_output(self, image):
