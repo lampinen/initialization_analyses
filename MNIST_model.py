@@ -13,7 +13,8 @@ import tensorflow.contrib.slim as slim
 config = {
     "num_runs": 30,
     "batch_size": 10,
-    "base_learning_rate": 0.0005,
+    "base_learning_rates": [0.0033, 0.001, 0.00033, 0.0001],
+    "base_learning_rate": None,
     "base_lr_decay": 0.8,
     "base_lr_decays_every": 10,
     "base_lr_min": 0.00001,
@@ -30,7 +31,7 @@ config = {
     "adv_eta": 0.05 # gradient descent step size for constructing adversarial examples
 }
 
-inits = [1.0, 0.33, 0.1] # multiplies xavier initializer 
+inits = [0.1, 0.33, 1.] # multiplies xavier initializer 
 
 ###### MNIST data loading and manipulation #####################################
 # downloaded from https://pjreddie.com/projects/mnist-in-csv/
@@ -284,34 +285,36 @@ class MNIST_model(object):
 ###### Run stuff ###############################################################
 
 for model_type in ["classification"]: 
-    for run in range(config["num_runs"]):
-        for init in inits:
-            filename_prefix = "type%s_init%.2f_run%i_" %(model_type, init, run)
-            print(filename_prefix)
-            np.random.seed(run)
-            tf.set_random_seed(run)
+    for base_lr in config["base_learning_rates"]:
+        config["base_learning_rate"] = base_lr # hacky
+        for run in range(config["num_runs"], -1, -1):
+            for init in inits:
+                filename_prefix = "type%s_baselr%f_init%.2f_run%i_" %(model_type, base_lr, init, run)
+                print(filename_prefix)
+                np.random.seed(run)
+                tf.set_random_seed(run)
 
-            model = MNIST_model(layer_sizes=config["layer_sizes"],
-                                init_multiplier=init,
-                                model_type=model_type)
+                model = MNIST_model(layer_sizes=config["layer_sizes"],
+                                    init_multiplier=init,
+                                    model_type=model_type)
 
-            order = np.random.permutation(len(train_data["labels"]))
-            train_data["labels"] = train_data["labels"][order]
-            train_data["images"] = train_data["images"][order]
+                order = np.random.permutation(len(train_data["labels"]))
+                train_data["labels"] = train_data["labels"][order]
+                train_data["images"] = train_data["images"][order]
 
-            nadv = config["num_adv_examples"]
+                nadv = config["num_adv_examples"]
 
-            model.run_training(train_data,
-                               config["base_training_epochs"],
-                               log_file_prefix=filename_prefix,
-                               val_dataset=val_data,
-                               test_dataset=test_data)
+                model.run_training(train_data,
+                                   config["base_training_epochs"],
+                                   log_file_prefix=filename_prefix,
+                                   val_dataset=val_data,
+                                   test_dataset=test_data)
 
-            for adv_off in range(1, 10):
-                model.construct_adversarial_examples(test_data["images"][:nadv, :],
-                                                     test_data["labels"][:nadv],
-                                                     np.mod(test_data["labels"][:nadv]+adv_off, 10),
-                                                     filename=config["output_path"] + filename_prefix + "adversarial.csv",
-                                                     create_file=adv_off == 1)
+                for adv_off in range(1, 10):
+                    model.construct_adversarial_examples(test_data["images"][:nadv, :],
+                                                         test_data["labels"][:nadv],
+                                                         np.mod(test_data["labels"][:nadv]+adv_off, 10),
+                                                         filename=config["output_path"] + filename_prefix + "adversarial.csv",
+                                                         create_file=adv_off == 1)
 
-            tf.reset_default_graph()
+                tf.reset_default_graph()
