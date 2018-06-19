@@ -22,7 +22,8 @@ config = {
     "nobias": False, # no biases
     "linear": False,
     "num_val": 10000,
-    "noise_prob": 0.33, # probability of flipping image pixels 
+    "noise_prob": 0.25, # probability of flipping image pixels 
+    "noise_sd": 0.2, # sd of gaussian noise added
     "verbose": True,
     "layer_sizes": [256, 256, 256, 256],
     "num_adv_examples": 10, # number of test examples to construct adversarial examples for
@@ -43,6 +44,8 @@ def process_data(dataset):
     images = dataset[:, 1:]/255.
     flip_mask = np.random.binomial(1, config["noise_prob"], np.shape(images))
     images = (1.-flip_mask) * images + flip_mask * (1.-images)
+    images += config["noise_sd"] * np.random.standard_normal(np.shape(images))
+    images = np.clip(images, 0, 1)
     data = {"labels": labels, "images": images}
     return data
 
@@ -235,7 +238,7 @@ class MNIST_model(object):
         losses_summarized = np.sum(losses)/len(dataset["labels"])#[np.sum(losses[dataset["labels"] == i])/np.sum(dataset["labels"] == i) for i in range(10)]
         return losses_summarized
 
-    def construct_adversarial_examples(self, images, labels, adversarial_classes, filename=None):
+    def construct_adversarial_examples(self, images, labels, adversarial_classes, filename=None, create_file=False):
         """Constructs adversarial examples for given image and classes."""
         if not self.classification:
             raise NotImplementedError("Cannot construct adversarial examples for a non-classification model")
@@ -255,11 +258,12 @@ class MNIST_model(object):
             curr_images[images_not_done, :] += adv_eta * curr_grads[0][images_not_done, :] 
 
         l2_dists = np.linalg.norm(curr_images - images, axis=-1)
-        if file_prefix is not None:
-            with open(filename, "a") as fout:
-                fout.write("index, original_class, new_class, l2_dist\n")
+        if filename is not None:
+            with open(filename, "w" if create_file else "a") as fout:
+                if create_file:
+                    fout.write("index, original_class, new_class, l2_dist\n")
                 for i in range(len(labels)):
-                    fout.write("%i, %i, %i, %f\n" % (i, labels[i], adversarial_classes[i], l2_dists))
+                    fout.write("%i, %i, %i, %f\n" % (i, labels[i], adversarial_classes[i], l2_dists[i]))
         return curr_images, l2_dists
 
     def display_output(self, image):
@@ -307,6 +311,7 @@ for model_type in ["classification"]:
                 model.construct_adversarial_examples(test_data["images"][:nadv, :],
                                                      test_data["labels"][:nadv],
                                                      np.mod(test_data["labels"][:nadv]+adv_off, 10),
-                                                     filename=filename_prefix + "adversarial.csv")
+                                                     filename=config["output_path"] + filename_prefix + "adversarial.csv",
+                                                     create_file=adv_off == 1)
 
             tf.reset_default_graph()
