@@ -302,10 +302,10 @@ class MNIST_model(object):
 
 ###### Run stuff ###############################################################
 
-for model_type in ["classification"]: 
-    for base_lr in config["base_learning_rates"]:
-        config["base_learning_rate"] = base_lr # hacky
-        for run in range(config["num_runs"]):
+for run in range(config["num_runs"]):
+    for model_type in ["classification"]: 
+        for base_lr in config["base_learning_rates"]:
+            config["base_learning_rate"] = base_lr # hacky
             for init in inits:
                 filename_prefix = "type%s_baselr%f_init%.2f_run%i_" %(model_type, base_lr, init, run)
                 print(filename_prefix)
