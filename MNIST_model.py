@@ -33,10 +33,12 @@ config = {
     "adv_eta": 0.05 # gradient descent step size for constructing adversarial examples
 }
 
-inits = [0.1, 0.33, 1.] # multiplies xavier initializer 
+inits = [1., 0.33, 0.1] # multiplies xavier initializer 
 
 ###### MNIST data loading and manipulation #####################################
 # downloaded from https://pjreddie.com/projects/mnist-in-csv/
+
+np.random.seed(0)
 
 train_data = np.loadtxt("../SWIL/MNIST_data/mnist_train.csv", delimiter = ",")
 test_data = np.loadtxt("../SWIL/MNIST_data/mnist_test.csv", delimiter = ",")
