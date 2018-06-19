@@ -22,12 +22,14 @@ config = {
     "nobias": False, # no biases
     "linear": False,
     "num_val": 10000,
-    "noise_prob": 0.15, # probability of flipping image pixels 
+    "noise_prob": 0.33, # probability of flipping image pixels 
     "verbose": True,
-    "layer_sizes": [256, 256, 256, 256, 256]
+    "layer_sizes": [256, 256, 256, 256],
+    "num_adv_examples": 10, # number of test examples to construct adversarial examples for
+    "adv_eta": 0.05 # gradient descent step size for constructing adversarial examples
 }
 
-inits = [1.0, 0.1] # multiplies xavier initializer 
+inits = [1.0, 0.33, 0.1] # multiplies xavier initializer 
 
 ###### MNIST data loading and manipulation #####################################
 # downloaded from https://pjreddie.com/projects/mnist-in-csv/
@@ -74,17 +76,22 @@ def _display_image(x):
     plot.figure()
     plot.imshow(x, vmin=0, vmax=1)
 
-class MNIST_autoenc(object):
-    """MNIST autoencoder architecture"""
+class MNIST_model(object):
+    """MNIST autoencoder or classification architecture"""
 
-    def __init__(self, layer_sizes, init_multiplier=1.0):
-        """Create a MNIST_autoenc model. 
+    def __init__(self, layer_sizes, init_multiplier=1.0, model_type="autoencoder"):
+        """Create a MNIST_model. 
            layer_sizes: list of the hidden layer sizes of the model
            init_multiplier: multiplicative factor on the Xavier initializer
         """
+        self.classification = model_type == "classification"
+
         self.base_lr = config["base_learning_rate"]
 
         self.input_ph = tf.placeholder(tf.float32, [None, 784])
+        if model_type == "classification":
+            self.target_ph = tf.placeholder(tf.int64, [None, ])
+
         self.lr_ph = tf.placeholder(tf.float32)
 
         self.bottleneck_size = min(layer_sizes)
@@ -111,15 +118,35 @@ class MNIST_autoenc(object):
                                                 weights_initializer=weight_init)
             if i == bottleneck_layer_i: 
                 self.bottleneck_rep = net
-        if config["nobias"]:
-            self.output = slim.layers.fully_connected(net, 784, activation_fn=final_activation_fn,
-                                                      weights_initializer=weight_init,
-                                                      biases_initializer=None)
-        else:
-            self.output = slim.layers.fully_connected(net, 784, activation_fn=final_activation_fn,
-                                                      weights_initializer=weight_init)
-                                                  
-        self.loss = tf.nn.l2_loss(self.output-self.input_ph)
+
+        if model_type == "classification":
+            if config["nobias"]:
+                self.logits = slim.layers.fully_connected(net, 10, activation_fn=None,
+                                                          weights_initializer=weight_init,
+                                                          biases_initializer=None)
+            else:
+                self.logits = slim.layers.fully_connected(net, 10, activation_fn=None,
+                                                          weights_initializer=weight_init)
+            
+            self.output = tf.nn.softmax(self.logits)
+                                                      
+            self.loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.target_ph,
+                                                                       logits=self.logits)
+
+            self.adv_class_ph = tf.placeholder(tf.int64, [None, ])
+            adv_class_grads = tf.one_hot(self.adv_class_ph, depth=10)
+            self.adv_grads = tf.gradients(xs=self.input_ph, ys=self.output, grad_ys=adv_class_grads)
+
+        elif model_type == "autoencoder":
+            if config["nobias"]:
+                self.output = slim.layers.fully_connected(net, 784, activation_fn=final_activation_fn,
+                                                          weights_initializer=weight_init,
+                                                          biases_initializer=None)
+            else:
+                self.output = slim.layers.fully_connected(net, 784, activation_fn=final_activation_fn,
+                                                          weights_initializer=weight_init)
+                                                      
+            self.loss = tf.nn.l2_loss(self.output-self.input_ph)
 
         self.optimizer = tf.train.GradientDescentOptimizer(self.lr_ph)
         self.train = self.optimizer.minimize(tf.reduce_mean(self.loss))
@@ -145,11 +172,16 @@ class MNIST_autoenc(object):
             for epoch in range(1, nepochs + 1):
                 order = np.random.permutation(len(dataset["labels"]))
                 for batch_i in range(len(dataset["labels"])//batch_size):
-                    this_batch_images = dataset["images"][order[batch_i*batch_size:(batch_i+1)*batch_size], :]
-                    self.sess.run(self.train, feed_dict={
-                            self.input_ph: this_batch_images,
-                            self.lr_ph: self.base_lr 
-                        })
+                    this_batch_indices = order[batch_i*batch_size:(batch_i+1)*batch_size]
+                    this_batch_images = dataset["images"][this_batch_indices, :]
+                    this_batch_feed_dict = {
+                        self.input_ph: this_batch_images,
+                        self.lr_ph: self.base_lr 
+                    }
+                    if self.classification:
+                        this_batch_feed_dict[self.target_ph] =dataset["labels"][this_batch_indices] 
+
+                    self.sess.run(self.train, feed_dict=this_batch_feed_dict)
 
                 train_loss = self.eval(dataset)
                 val_loss = self.eval(val_dataset)
@@ -181,56 +213,100 @@ class MNIST_autoenc(object):
                 })
         return reps
 
-    def get_loss(self, images):
+    def get_loss(self, dataset):
         """Gets losses for the given images"""
         batch_size = config["batch_size"]
-        loss = np.zeros([len(images)])
-        for batch_i in range((len(images)//batch_size) + 1):
-            this_batch_images = images[batch_i*batch_size:(batch_i+1)*batch_size, :]
-            loss[batch_i*batch_size:(batch_i+1)*batch_size] = self.sess.run(
-                self.loss, feed_dict={
+        loss = np.zeros([len(dataset["labels"])])
+        for batch_i in range((len(dataset["labels"])//batch_size)):
+            this_batch_indices = range(batch_i*batch_size,(batch_i+1)*batch_size)
+            this_batch_images = dataset["images"][this_batch_indices, :]
+            this_batch_feed_dict = {
                     self.input_ph: this_batch_images
-                })
+                }
+            if self.classification:
+                this_batch_feed_dict[self.target_ph] = dataset["labels"][this_batch_indices] 
+            loss[batch_i*batch_size:(batch_i+1)*batch_size] = self.sess.run(
+                self.loss, feed_dict=this_batch_feed_dict)
         return loss
 
     def eval(self, dataset):
         """Evaluates model on the given dataset. Returns average loss."""
-        losses = self.get_loss(dataset["images"])
+        losses = self.get_loss(dataset)
         losses_summarized = np.sum(losses)/len(dataset["labels"])#[np.sum(losses[dataset["labels"] == i])/np.sum(dataset["labels"] == i) for i in range(10)]
         return losses_summarized
 
+    def construct_adversarial_examples(self, images, labels, adversarial_classes, filename=None):
+        """Constructs adversarial examples for given image and classes."""
+        if not self.classification:
+            raise NotImplementedError("Cannot construct adversarial examples for a non-classification model")
+        curr_images = np.copy(images)
+        images_not_done = np.ones_like(labels, dtype=np.bool)
+        adv_eta = config["adv_eta"]
+
+        while np.any(images_not_done):
+            this_feed_dict = {
+                    self.input_ph: curr_images,
+                    self.target_ph: labels,
+                    self.adv_class_ph: adversarial_classes
+                }
+            curr_grads, curr_softmaxes = self.sess.run([self.adv_grads, self.output], feed_dict=this_feed_dict)
+            curr_hardmaxes = np.argmax(curr_softmaxes, axis=-1)
+            images_not_done = np.not_equal(curr_hardmaxes, adversarial_classes)
+            curr_images[images_not_done, :] += adv_eta * curr_grads[0][images_not_done, :] 
+
+        l2_dists = np.linalg.norm(curr_images - images, axis=-1)
+        if file_prefix is not None:
+            with open(filename, "a") as fout:
+                fout.write("index, original_class, new_class, l2_dist\n")
+                for i in range(len(labels)):
+                    fout.write("%i, %i, %i, %f\n" % (i, labels[i], adversarial_classes[i], l2_dists))
+        return curr_images, l2_dists
+
     def display_output(self, image):
-        """Runs an image and shows comparison"""
-        output_image = self.sess.run(self.output, feed_dict={
+        """Runs an image and shows comparison if autoencoder"""
+        res = self.sess.run(self.output, feed_dict={
                 self.input_ph: np.expand_dims(image, 0) 
             })
 
         _display_image(image)
-        _display_image(output_image)
+        if self.model_type == "autoencoder":
+            _display_image(res)
+        else:
+            print(res)
         plot.show()
 
 
 
 ###### Run stuff ###############################################################
 
-for run in range(config["num_runs"]):
-    for init in inits:
-        filename_prefix = "init%.2f_run%i_" %(init, run)
-        print(filename_prefix)
-        np.random.seed(run)
-        tf.set_random_seed(run)
+for model_type in ["classification"]: 
+    for run in range(config["num_runs"]):
+        for init in inits:
+            filename_prefix = "type%s_init%.2f_run%i_" %(model_type, init, run)
+            print(filename_prefix)
+            np.random.seed(run)
+            tf.set_random_seed(run)
 
-        model = MNIST_autoenc(layer_sizes=config["layer_sizes"],
-                              init_multiplier=init)
+            model = MNIST_model(layer_sizes=config["layer_sizes"],
+                                init_multiplier=init,
+                                model_type=model_type)
 
-        order = np.random.permutation(len(train_data["labels"]))
-        train_data["labels"] = train_data["labels"][order]
-        train_data["images"] = train_data["images"][order]
+            order = np.random.permutation(len(train_data["labels"]))
+            train_data["labels"] = train_data["labels"][order]
+            train_data["images"] = train_data["images"][order]
 
-        model.run_training(train_data,
-                           config["base_training_epochs"],
-                           log_file_prefix=filename_prefix,
-                           val_dataset=val_data,
-                           test_dataset=test_data)
+            nadv = config["num_adv_examples"]
 
-        tf.reset_default_graph()
+            model.run_training(train_data,
+                               config["base_training_epochs"],
+                               log_file_prefix=filename_prefix,
+                               val_dataset=val_data,
+                               test_dataset=test_data)
+
+            for adv_off in range(1, 10):
+                model.construct_adversarial_examples(test_data["images"][:nadv, :],
+                                                     test_data["labels"][:nadv],
+                                                     np.mod(test_data["labels"][:nadv]+adv_off, 10),
+                                                     filename=filename_prefix + "adversarial.csv")
+
+            tf.reset_default_graph()
