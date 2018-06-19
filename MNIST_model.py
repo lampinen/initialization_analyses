@@ -27,6 +27,8 @@ config = {
     "noise_sd": 0.2, # sd of gaussian noise added
     "verbose": True,
     "layer_sizes": [256, 256, 256, 256],
+    "stop_thresh": 0.001, # stop when trainin error reaches this
+    "stop_val_increase_ratio": 1.05, # ratio of increase in validation error over min at which we stop
     "num_adv_examples": 10, # number of test examples to construct adversarial examples for
     "adv_eta": 0.05 # gradient descent step size for constructing adversarial examples
 }
@@ -173,6 +175,7 @@ class MNIST_model(object):
                                             test_loss))
 
             batch_size = config["batch_size"]
+            min_val_loss = val_loss
             for epoch in range(1, nepochs + 1):
                 order = np.random.permutation(len(dataset["labels"]))
                 for batch_i in range(len(dataset["labels"])//batch_size):
@@ -199,6 +202,16 @@ class MNIST_model(object):
                                                 train_loss,
                                                 val_loss,
                                                 test_loss))
+                # early stop?
+                if train_loss < config["stop_thresh"]:
+                    print("Early stopping!")
+                    break
+
+                if val_loss > config["stop_val_increase_ratio"] * min_val_loss:
+                    print("Early stopping -- validation error increasing.")
+                    break
+
+                min_val_loss = min(val_loss, min_val_loss)
 
                 # update lr
                 if epoch > 0 and epoch % config["base_lr_decays_every"] == 0 and self.base_lr > config["base_lr_min"]: 
