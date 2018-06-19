@@ -13,7 +13,7 @@ import tensorflow.contrib.slim as slim
 config = {
     "num_runs": 30,
     "batch_size": 10,
-    "base_learning_rates": [0.0033, 0.001, 0.00033, 0.0001],
+    "base_learning_rates": [0.01, 0.0033, 0.001, 0.00033, 0.0001],
     "base_learning_rate": None,
     "base_lr_decay": 0.8,
     "base_lr_decays_every": 10,
@@ -34,7 +34,7 @@ config = {
     "adv_eta": 0.05 # gradient descent step size for constructing adversarial examples
 }
 
-inits = [1., 0.33, 0.1] # multiplies xavier initializer 
+inits = [0.1, 0.33, 1.0] # multiplies xavier initializer 
 
 ###### MNIST data loading and manipulation #####################################
 # downloaded from https://pjreddie.com/projects/mnist-in-csv/
