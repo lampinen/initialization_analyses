@@ -1,0 +1,100 @@
+---
+title: "Initialization comparison analyses"
+output: html_notebook
+---
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+result_dir = "results/"
+init_mults = c(1., 0.15, 0.033)
+lrs = c(0.01, 0.0033, 0.001)
+decay_everys = c(5, 2, 1, 25)
+nruns = 2
+
+d = data.frame()
+for (m in init_mults) {
+  for (lr in lrs) {
+    for (decay_every in decay_everys) {
+      for (run_i in 0:(nruns-1)) {
+        filename = sprintf("%sdecay0.8_every%i_typeclassification_baselr%f_init%.2f_run%i_losses.csv", result_dir, decay_every, lr, m, run_i)
+        if (!file.exists(filename)) {
+          next
+        }
+        this_d = read.csv(filename)
+        this_d$run = run_i
+        this_d$m = m
+        this_d$decay_every = decay_every
+        this_d$base_lr = lr
+        d = bind_rows(d, this_d)
+      }
+    }
+  }
+}
+```
+ 
+ 
+```{r}
+avg_d = d %>%
+  group_by(m, decay_every, base_lr, epoch) %>%
+  summarize(train=mean(train),
+            test=mean(test),
+            val=mean(val))
+```
+ 
+```{r}
+ggplot(avg_d, aes(x=epoch, y=test, color=as.factor(base_lr))) +
+  geom_line() +
+  scale_color_brewer(palette="Set2") + 
+  facet_grid(decay_every~m)
+```
+```{r}
+adv_d = data.frame()
+for (m in init_mults) {
+  for (lr in lrs) {
+    for (decay_every in decay_everys) {
+      for (run_i in 0:(nruns-1)) {
+        filename = sprintf("%sdecay0.8_every%i_typeclassification_baselr%f_init%.2f_run%i_adversarial.csv", result_dir, decay_every, lr, m, run_i)
+        if (!file.exists(filename)) {
+          next
+        }
+        this_d = read.csv(filename)
+        this_d$run = run_i
+        this_d$m = m
+        this_d$decay_every = decay_every
+        this_d$base_lr = lr
+        adv_d = bind_rows(adv_d, this_d)
+      }
+    }
+  }
+}
+
+```
+ 
+```{r}
+adv_sum_d = adv_d %>%
+  mutate(l2_dist = ifelse(failed, NA, l2_dist)) %>%
+  group_by(m, decay_every, base_lr) %>%
+  summarize(sd_l2_dist=sd(l2_dist, na.rm=T),
+            l2_dist=mean(l2_dist, na.rm=T),
+            pct_failed=sum(failed)/n())
+```
+
+```{r}
+ggplot(data=adv_sum_d, aes(x=factor(m), fill=factor(base_lr), y= l2_dist)) +
+  geom_bar(stat="identity", position="dodge")  +
+  scale_fill_brewer(palette="Set2") + 
+  facet_grid(decay_every ~.)
+```
+ 
+ 
+```{r}
+ggplot(data=adv_sum_d, aes(x=factor(m), fill=factor(base_lr), y= pct_failed)) +
+  geom_bar(stat="identity", position="dodge")  +
+  scale_fill_brewer(palette="Set2")+ 
+  ylim(0, 1) +
+  facet_grid(decay_every ~.)
+```
