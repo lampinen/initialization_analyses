@@ -13,11 +13,12 @@ import tensorflow.contrib.slim as slim
 config = {
     "num_runs": 30,
     "batch_size": 10,
-    "base_learning_rates": [0.01, 0.0033, 0.001, 0.00033, 0.0001],
+    "base_learning_rates": [0.005, 0.0033],
     "base_learning_rate": None,
     "base_lr_decay": 0.8,
-    "base_lr_decays_every": 10,
-    "base_lr_min": 0.00001,
+    "base_lr_decays_every": None,
+    "decay_everys": [10, 3, 1],
+    "base_lr_min": 0.0001,
     "base_training_epochs": 200,
     "output_path": "./results/",
     "nobias": False, # no biases
@@ -26,15 +27,16 @@ config = {
     "noise_prob": 0.25, # probability of flipping image pixels 
     "noise_sd": 0.2, # sd of gaussian noise added
     "verbose": True,
-    "layer_sizes": [256, 256, 256, 256],
+    "layer_sizes": [1000, 1000, 1000, 1000],
     "stop_thresh": 0.001, # stop when trainin error reaches this
     "stop_val_increase_ratio": 1.05, # ratio of increase in validation error over min at which we stop
     "num_adv_examples": 10, # number of test examples to construct adversarial examples for
-    "max_adv_iterations": 5000,
-    "adv_eta": 0.05 # gradient descent step size for constructing adversarial examples
+    "max_adv_iterations": 10000,
+    "adv_eta": 0.05, # gradient descent step size for constructing adversarial examples
+    "adv_momentum": 0.9 # momentum for adversarial example construction
 }
 
-inits = [0.1, 0.33, 1.0] # multiplies xavier initializer 
+inits = [1.0] # factor in xavier initializer 
 
 ###### MNIST data loading and manipulation #####################################
 # downloaded from https://pjreddie.com/projects/mnist-in-csv/
@@ -88,12 +90,14 @@ def _display_image(x):
 class MNIST_model(object):
     """MNIST autoencoder or classification architecture"""
 
-    def __init__(self, layer_sizes, init_multiplier=1.0, model_type="autoencoder"):
+    def __init__(self, layer_sizes, init_multiplier=1.0, model_type="autoencoder", regularization="None", reg_param=None):
         """Create a MNIST_model. 
            layer_sizes: list of the hidden layer sizes of the model
            init_multiplier: multiplicative factor on the Xavier initializer
         """
         self.classification = model_type == "classification"
+        self.reg_type = regularization
+        self.reg_param = reg_param
 
         self.base_lr = config["base_learning_rate"]
 
@@ -117,53 +121,74 @@ class MNIST_model(object):
 
         net = self.input_ph
         bottleneck_layer_i = len(layer_sizes)//2
-        for i, h_size in enumerate(layer_sizes):
-            if config["nobias"]:
-              net = slim.layers.fully_connected(net, h_size, activation_fn=intermediate_activation_fn,
-                                                weights_initializer=weight_init,
-                                                biases_initializer=None)
-            else:
-              net = slim.layers.fully_connected(net, h_size, activation_fn=intermediate_activation_fn,
-                                                weights_initializer=weight_init)
-            if i == bottleneck_layer_i: 
-                self.bottleneck_rep = net
+        with slim.arg_scope([slim.layers.fully_connected],
+                            weights_regularizer=slim.l2_regularizer(reg_param) if regularization=="L2" else None):
+            for i, h_size in enumerate(layer_sizes):
+                if config["nobias"]:
+                  net = slim.layers.fully_connected(net, h_size, activation_fn=intermediate_activation_fn,
+                                                    weights_initializer=weight_init,
+                                                    biases_initializer=None)
+                else:
+                  net = slim.layers.fully_connected(net, h_size, activation_fn=intermediate_activation_fn,
+                                                    weights_initializer=weight_init)
+                if i == bottleneck_layer_i: 
+                    self.bottleneck_rep = net
 
-        if model_type == "classification":
-            if config["nobias"]:
-                self.logits = slim.layers.fully_connected(net, 10, activation_fn=None,
-                                                          weights_initializer=weight_init,
-                                                          biases_initializer=None)
-            else:
-                self.logits = slim.layers.fully_connected(net, 10, activation_fn=None,
-                                                          weights_initializer=weight_init)
-            
-            self.output = tf.nn.softmax(self.logits)
-                                                      
-            self.loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.target_ph,
-                                                                       logits=self.logits)
+            if model_type == "classification":
+                if config["nobias"]:
+                    self.logits = slim.layers.fully_connected(net, 10, activation_fn=None,
+                                                              weights_initializer=weight_init,
+                                                              biases_initializer=None)
+                else:
+                    self.logits = slim.layers.fully_connected(net, 10, activation_fn=None,
+                                                              weights_initializer=weight_init)
+                
+                self.output = tf.nn.softmax(self.logits)
+                                                          
+                self.loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.target_ph,
+                                                                           logits=self.logits)
 
-            self.adv_class_ph = tf.placeholder(tf.int64, [None, ])
-            adv_class_grads = tf.one_hot(self.adv_class_ph, depth=10)
-            self.adv_grads = tf.gradients(xs=self.input_ph, ys=self.output, grad_ys=adv_class_grads)
+                self.adv_class_ph = tf.placeholder(tf.int64, [None, ])
+                adv_class_grads = tf.one_hot(self.adv_class_ph, depth=10)
+                self.adv_grads = tf.gradients(xs=self.input_ph, ys=self.output, grad_ys=adv_class_grads)
 
-        elif model_type == "autoencoder":
-            if config["nobias"]:
-                self.output = slim.layers.fully_connected(net, 784, activation_fn=final_activation_fn,
-                                                          weights_initializer=weight_init,
-                                                          biases_initializer=None)
-            else:
-                self.output = slim.layers.fully_connected(net, 784, activation_fn=final_activation_fn,
-                                                          weights_initializer=weight_init)
-                                                      
-            self.loss = tf.nn.l2_loss(self.output-self.input_ph)
+            elif model_type == "autoencoder":
+                if config["nobias"]:
+                    self.output = slim.layers.fully_connected(net, 784, activation_fn=final_activation_fn,
+                                                              weights_initializer=weight_init,
+                                                              biases_initializer=None)
+                else:
+                    self.output = slim.layers.fully_connected(net, 784, activation_fn=final_activation_fn,
+                                                              weights_initializer=weight_init)
+                                                          
+                self.loss = tf.nn.l2_loss(self.output-self.input_ph)
 
-        self.optimizer = tf.train.GradientDescentOptimizer(self.lr_ph)
+
+        all_weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, '.*weights.*')
+        if regularization == "Zeroing":
+            self.squish_weights = [tf.assign(x, reg_param*x) for x in all_weights]
+        elif regularization == "Truncating":
+            def _truncate_SVD(X, tail_pct=0.1): 
+                """Truncates SVD to only modes that are higher than specified percent of max mode strength"""
+                S, U, V = tf.svd(X, full_matrices=False)
+                tail_amount = tail_pct*tf.reduce_max(S)
+                new_S = tf.where(tf.greater(S, tail_amount), S, tf.zeros_like(S)) 
+                return tf.matmul(U, tf.matmul(tf.diag(new_S), tf.transpose(V))) 
+            self.truncate_weights = [tf.assign(x, _truncate_SVD(x, tail_pct=reg_param)) for x in all_weights]
+            #self.display_weight_S = [tf.svd(x, compute_uv=False) for x in all_weights]
+
+
+        self.optimizer = tf.train.MomentumOptimizer(self.lr_ph, 0.9)
         self.train = self.optimizer.minimize(tf.reduce_mean(self.loss))
 
         self.first_weights = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'fully_connected/weights')[0]
         self.first_biases = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'fully_connected/biases')[0]
 
-        self.sess = tf.Session()
+        self.saver = tf.train.Saver()
+
+        sess_config = tf.ConfigProto()
+        sess_config.gpu_options.allow_growth = True
+        self.sess = tf.Session(config=sess_config)
         self.sess.run(tf.global_variables_initializer())
 
     def run_training(self, dataset, nepochs=100, log_file_prefix=None, val_dataset=None, test_dataset=None):
@@ -193,6 +218,12 @@ class MNIST_model(object):
 
                     self.sess.run(self.train, feed_dict=this_batch_feed_dict)
 
+                # zeroing/truncating if applicable
+                if self.reg_type == "Zeroing":
+                    self.sess.run(self.squish_weights)
+                elif self.reg_type == "Truncating":
+                    self.sess.run(self.truncate_weights)
+
                 train_loss = self.eval(dataset)
                 val_loss = self.eval(val_dataset)
                 test_loss = self.eval(test_dataset)
@@ -205,20 +236,26 @@ class MNIST_model(object):
                                                 train_loss,
                                                 val_loss,
                                                 test_loss))
+
+                if val_loss <= min_val_loss:
+                    self.saver.save(self.sess, './checkpoints/model-checkpoint')
+                    min_val_loss = val_loss
+
                 # early stop?
                 if train_loss < config["stop_thresh"]:
                     print("Early stopping!")
+                    self.saver.restore(self.sess, './checkpoints/model-checkpoint')
                     break
 
                 if val_loss > config["stop_val_increase_ratio"] * min_val_loss:
                     print("Early stopping -- validation error increasing.")
+                    self.saver.restore(self.sess, './checkpoints/model-checkpoint')
                     break
-
-                min_val_loss = min(val_loss, min_val_loss)
 
                 # update lr
                 if epoch > 0 and epoch % config["base_lr_decays_every"] == 0 and self.base_lr > config["base_lr_min"]: 
                     self.base_lr *= config["base_lr_decay"]
+
          
 
     def get_reps(self, images):
@@ -260,6 +297,7 @@ class MNIST_model(object):
         if not self.classification:
             raise NotImplementedError("Cannot construct adversarial examples for a non-classification model")
         curr_images = np.copy(images)
+        updates = np.zeros_like(images)
         images_not_done = np.ones_like(labels, dtype=np.bool)
         adv_eta = config["adv_eta"]
 
@@ -272,7 +310,8 @@ class MNIST_model(object):
             curr_grads, curr_softmaxes = self.sess.run([self.adv_grads, self.output], feed_dict=this_feed_dict)
             curr_hardmaxes = np.argmax(curr_softmaxes, axis=-1)
             images_not_done = np.not_equal(curr_hardmaxes, adversarial_classes)
-            curr_images[images_not_done, :] += adv_eta * curr_grads[0][images_not_done, :] 
+            updates = (1-config["adv_momentum"]) * adv_eta * curr_grads[0] + config["adv_momentum"] * updates 
+            curr_images[images_not_done, :] += updates[images_not_done, :] 
             if not np.any(images_not_done):
                 break
 
@@ -302,37 +341,53 @@ class MNIST_model(object):
 
 ###### Run stuff ###############################################################
 
+
 for run in range(config["num_runs"]):
-    for model_type in ["classification"]: 
-        for base_lr in config["base_learning_rates"]:
-            config["base_learning_rate"] = base_lr # hacky
-            for init in inits:
-                filename_prefix = "type%s_baselr%f_init%.2f_run%i_" %(model_type, base_lr, init, run)
-                print(filename_prefix)
-                np.random.seed(run)
-                tf.set_random_seed(run)
+    for regularization in ["Truncating", "Zeroing", "L2", "None"]:
+        if regularization == "None":
+            reg_params = [0.]
+        elif regularization == "L2":
+            reg_params = [0.01, 0.001, 0.0001]
+        elif regularization == "Zeroing":
+            reg_params = [0.33, 0.5, 0.1, 0.033]
+        elif regularization == "Truncating":
+            reg_params = [0.1, 0.2, 0.05, 0.33]
+        
+        for reg_param in reg_params:
+            for model_type in ["classification"]: 
+                for base_lr in config["base_learning_rates"]:
+                    for decay_every in config["decay_everys"]:
+                        config["base_learning_rate"] = base_lr # hacky
+                        config["base_lr_decays_every"] = decay_every 
+                        for init in inits:
+                            filename_prefix = "decay0.8_every%i_type%s_baselr%f_init%.2f_reg%s_param%.3f_run%i_" %(decay_every, model_type, base_lr, init, regularization, reg_param, run)
+                            print(filename_prefix)
+                            np.random.seed(run)
+                            tf.set_random_seed(run)
 
-                model = MNIST_model(layer_sizes=config["layer_sizes"],
-                                    init_multiplier=init,
-                                    model_type=model_type)
+                            model = MNIST_model(layer_sizes=config["layer_sizes"],
+                                                init_multiplier=init,
+                                                regularization=regularization,
+                                                reg_param=reg_param,
+                                                model_type=model_type)
 
-                order = np.random.permutation(len(train_data["labels"]))
-                train_data["labels"] = train_data["labels"][order]
-                train_data["images"] = train_data["images"][order]
+                            order = np.random.permutation(len(train_data["labels"]))
+                            train_data["labels"] = train_data["labels"][order]
+                            train_data["images"] = train_data["images"][order]
 
-                nadv = config["num_adv_examples"]
+                            nadv = config["num_adv_examples"]
 
-                model.run_training(train_data,
-                                   config["base_training_epochs"],
-                                   log_file_prefix=filename_prefix,
-                                   val_dataset=val_data,
-                                   test_dataset=test_data)
+                            model.run_training(train_data,
+                                               config["base_training_epochs"],
+                                               log_file_prefix=filename_prefix,
+                                               val_dataset=val_data,
+                                               test_dataset=test_data)
 
-                for adv_off in range(1, 10):
-                    model.construct_adversarial_examples(test_data["images"][:nadv, :],
-                                                         test_data["labels"][:nadv],
-                                                         np.mod(test_data["labels"][:nadv]+adv_off, 10),
-                                                         filename=config["output_path"] + filename_prefix + "adversarial.csv",
-                                                         create_file=adv_off == 1)
+                            for adv_off in range(1, 10):
+                                model.construct_adversarial_examples(test_data["images"][:nadv, :],
+                                                                     test_data["labels"][:nadv],
+                                                                     np.mod(test_data["labels"][:nadv]+adv_off, 10),
+                                                                     filename=config["output_path"] + filename_prefix + "adversarial.csv",
+                                                                     create_file=adv_off == 1)
 
-                tf.reset_default_graph()
+                            tf.reset_default_graph()
